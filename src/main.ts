@@ -9,6 +9,8 @@ const router = createRouter({
     { path: '/', component: Home },
     { path: '/edit/:scenario?', component: () => import('./views/Editor.vue') },
     { path: '/pack', component: () => import('./views/StickerPack.vue') },
+    { path: '/collage', component: () => import('./views/Collage.vue') },
+    { path: '/convert', component: () => import('./views/Convert.vue') },
     { path: '/:p(.*)*', redirect: '/' },
   ],
 })

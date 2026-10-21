@@ -5,7 +5,7 @@ export default defineConfig({
   base: '/local-editor/',
   plugins: [vue(), VitePWA({
     strategies: 'injectManifest', srcDir: 'src', filename: 'sw.ts', registerType: 'prompt',
-    injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest}'], globIgnores: ['**/*.wasm', '**/ort*.mjs'], maximumFileSizeToCacheInBytes: 3_000_000 },
+    injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest}'], globIgnores: ['**/heic2any-*.js', '**/*.wasm', '**/ort*.mjs'], maximumFileSizeToCacheInBytes: 3_000_000 },
     manifest: {
       name: 'Local Editor', short_name: 'LocalEditor', description: 'Локальный редактор фото — без загрузки на сервер',
       lang: 'ru', id: '/local-editor/', start_url: '/local-editor/', scope: '/local-editor/', display: 'standalone', theme_color: '#000000', background_color: '#000000',

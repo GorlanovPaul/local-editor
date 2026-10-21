@@ -12,10 +12,10 @@ export const scenarios: Scenario[] = [
   { id: 'erase', title: 'Удалить объект', desc: 'Закрасьте лишнее — исчезнет', icon: 'Eraser', route: '/edit/erase', preset: { tab: 'ai', aiTool: 'erase' }, tag: 'ИИ' },
   { id: 'recolor', title: 'Перекрасить объект', desc: 'Коснитесь и выберите цвет', icon: 'Pipette', route: '/edit/recolor', preset: { tab: 'ai', aiTool: 'obj' }, tag: 'ИИ' },
   { id: 'enhance', title: 'Улучшить качество', desc: 'Автоулучшение и увеличение ×2/×4', icon: 'Sparkles', route: '/edit/enhance', preset: { tab: 'ai', aiTool: 'up', auto: 'enhance' }, tag: 'ИИ' },
-  { id: 'collage', title: 'Коллаж', desc: 'Сетки, отступы, скругления', icon: 'LayoutGrid', route: '/collage', soon: true },
+  { id: 'collage', title: 'Коллаж', desc: 'Сетки, отступы, скругления', icon: 'LayoutGrid', route: '/collage' },
   { id: 'meme', title: 'Мем / текст на фото', desc: 'Подписи сверху и снизу', icon: 'Type', route: '/edit/meme', preset: { tab: 'text' } },
   { id: 'avatar', title: 'Аватарка', desc: 'Круг, новый фон, обводка', icon: 'CircleUser', route: '/edit/avatar', preset: { tab: 'crop', aspect: '1:1', frame: 'circle', frameColor: '', export: { size: 1080, type: 'image/png' } } },
-  { id: 'compress', title: 'Сжать / конвертировать', desc: 'Пакетно, без EXIF, HEIC → JPEG', icon: 'FileDown', route: '/convert', soon: true },
+  { id: 'compress', title: 'Сжать / конвертировать', desc: 'Пакетно, без EXIF, HEIC → JPEG', icon: 'FileDown', route: '/convert' },
   { id: 'social', title: 'Размер для соцсетей', desc: 'Instagram, Telegram, VK, YouTube', icon: 'Ratio', route: '/edit/social', preset: { tab: 'crop', social: true } },
 ]
 export const socialPresets = [

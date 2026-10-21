@@ -23,7 +23,7 @@ const RT = 'local-editor-runtime'
 self.addEventListener('fetch', (e: FetchEvent) => {
   if (e.request.method !== 'GET') return
   const u = new URL(e.request.url)
-  const same = u.origin === self.location.origin && /\/assets\/.*(ai\.worker|ort|\.wasm)/.test(u.pathname)
+  const same = u.origin === self.location.origin && /\/assets\/.*(heic2any|\.wasm)/.test(u.pathname)
   if (!same && u.hostname !== 'cdn.jsdelivr.net') return
   e.respondWith((async () => {
     const c = await caches.open(RT), hit = await c.match(e.request)
