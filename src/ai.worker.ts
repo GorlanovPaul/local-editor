@@ -1,8 +1,15 @@
 /// <reference lib="webworker" />
-import { pipeline, env, RawImage, SamModel, AutoModel, AutoProcessor, Tensor } from '@huggingface/transformers'
-import * as ort from 'onnxruntime-web'
-env.allowLocalModels = false
-env.useBrowserCache = true // Cache Storage 'transformers-cache' -> works offline after first use
+import type * as TJ from '@huggingface/transformers'
+import type * as ORT from 'onnxruntime-web'
+// Loaded lazily from jsDelivr (pinned versions) and runtime-cached by the service worker; not bundled/precached.
+const TJ_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/dist/transformers.min.js'
+const ORT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0-dev.20260914-8d85527a0/dist/ort.all.bundle.min.mjs'
+let T: typeof TJ, ort: typeof ORT
+async function libs() {
+  if (!T) { T = await import(/* @vite-ignore */ TJ_URL); T.env.allowLocalModels = false; T.env.useBrowserCache = true }
+  return T
+}
+type RawImage = TJ.RawImage
 
 let id = 0
 const post = (m: any, t?: Transferable[]) => (self as any).postMessage({ id, ...m }, t || [])
@@ -23,12 +30,12 @@ async function withFallback<T>(f: (device: string, gpu: boolean) => Promise<T>):
 }
 const dev = new Map<string, string>()
 
-function toRaw(d: { data: Uint8ClampedArray; w: number; h: number }) { return new RawImage(d.data, d.w, d.h, 4) }
+function toRaw(d: { data: Uint8ClampedArray; w: number; h: number }) { return new T.RawImage(d.data, d.w, d.h, 4) }
 
 // ---- background removal (RMBG-1.4) ----
 let bg: { model: any; proc: any } | null = null
 async function bgRemove(img: any) {
-  files.clear()
+  files.clear(); const { AutoProcessor, AutoModel } = await libs()
   if (!bg) {
     const proc = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', { progress_callback: progress, config: { do_normalize: true, do_pad: false, do_rescale: true, do_resize: true, image_mean: [0.5, 0.5, 0.5], feature_extractor_type: 'ImageFeatureExtractor', image_std: [1, 1, 1], resample: 2, rescale_factor: 1 / 255, size: { width: 1024, height: 1024 } } as any })
     const model = await withFallback(async (d, g) => { const m = await AutoModel.from_pretrained('briaai/RMBG-1.4', { device: d as any, dtype: (g ? 'fp16' : 'q8') as any, progress_callback: progress, config: { model_type: 'custom' } as any }); dev.set('bg', d); return m })
@@ -36,7 +43,7 @@ async function bgRemove(img: any) {
   }
   post({ type: 'status', text: 'Удаление фона (' + dev.get('bg') + ')…' })
   const raw = toRaw(img), { pixel_values } = await bg.proc(raw), { output } = await bg.model({ input: pixel_values })
-  const m = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(raw.width, raw.height)
+  const m = await T.RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(raw.width, raw.height)
   const n = m.width * m.height, a = new Uint8ClampedArray(n)
   for (let i = 0; i < n; i++) a[i] = m.data[i * m.channels]
   return { w: m.width, h: m.height, alpha: a }
@@ -45,6 +52,7 @@ async function bgRemove(img: any) {
 // ---- segment anything (SlimSAM) ----
 let sam: any, samProc: any, emb: { key: string; e: any; inputs: any } | null = null
 async function segment(img: any, key: string, pts: number[][]) {
+  const { AutoProcessor, SamModel, Tensor } = await libs()
   if (!sam) {
     files.clear()
     samProc = await AutoProcessor.from_pretrained('Xenova/slimsam-77-uniform', { progress_callback: progress })
@@ -69,7 +77,7 @@ async function segment(img: any, key: string, pts: number[][]) {
 
 // ---- inpainting (MI-GAN, MIT) ----
 const MIGAN = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx'
-let migan: ort.InferenceSession | null = null
+let migan: ORT.InferenceSession | null = null
 async function fetchCached(url: string) {
   const c = await caches.open('local-editor-models'); let r = await c.match(url)
   if (!r) {
@@ -82,6 +90,7 @@ async function fetchCached(url: string) {
 }
 async function inpaint(img: { data: Uint8ClampedArray; w: number; h: number }, mask: Uint8ClampedArray) {
   if (!migan) {
+    ort ||= await import(/* @vite-ignore */ ORT_URL)
     const buf = await fetchCached(MIGAN)
     migan = await withFallback(async (d) => { const s = await ort.InferenceSession.create(buf, { executionProviders: [d] }); dev.set('inpaint', d); return s })
   }
@@ -97,20 +106,21 @@ async function inpaint(img: { data: Uint8ClampedArray; w: number; h: number }, m
 // ---- upscale (Swin2SR) with tiling ----
 const up = new Map<number, any>()
 async function upscale(img: { data: Uint8ClampedArray; w: number; h: number }, scale: number) {
+  const { pipeline } = await libs()
   if (!up.has(scale)) {
     files.clear()
     const model = scale === 4 ? 'Xenova/swin2SR-compressed-sr-x4-48' : 'Xenova/swin2SR-classical-sr-x2-64'
     up.set(scale, await withFallback(async (d, g) => { const p = await pipeline('image-to-image', model, { device: d as any, dtype: (g ? 'fp16' : 'fp32') as any, progress_callback: progress }); dev.set('up', d); return p }))
   }
-  const p = up.get(scale), { w, h, data } = img, T = 128, O = 12, W = w * scale, H = h * scale, out = new Uint8ClampedArray(W * H * 4)
-  const nx = Math.ceil(w / T), ny = Math.ceil(h / T); let k = 0
+  const p = up.get(scale), { w, h, data } = img, TS = 128, O = 12, W = w * scale, H = h * scale, out = new Uint8ClampedArray(W * H * 4)
+  const nx = Math.ceil(w / TS), ny = Math.ceil(h / TS); let k = 0
   for (let ty = 0; ty < ny; ty++) for (let tx = 0; tx < nx; tx++) {
     post({ type: 'status', text: `Увеличение ×${scale}: фрагмент ${++k} из ${nx * ny} (${dev.get('up')})`, frac: k / (nx * ny) })
-    const x0 = tx * T, y0 = ty * T, x1 = Math.min(w, x0 + T), y1 = Math.min(h, y0 + T)
+    const x0 = tx * TS, y0 = ty * TS, x1 = Math.min(w, x0 + TS), y1 = Math.min(h, y0 + TS)
     const sx = Math.max(0, x0 - O), sy = Math.max(0, y0 - O), ex = Math.min(w, x1 + O), ey = Math.min(h, y1 + O), tw = ex - sx, th = ey - sy
     const tile = new Uint8ClampedArray(tw * th * 4)
     for (let y = 0; y < th; y++) tile.set(data.subarray(((sy + y) * w + sx) * 4, ((sy + y) * w + ex) * 4), y * tw * 4)
-    const r: RawImage = await p(new RawImage(tile, tw, th, 4)), rc = r.channels, rw = r.width
+    const r: RawImage = await p(new T.RawImage(tile, tw, th, 4)), rc = r.channels, rw = r.width
     for (let y = (y0 - sy) * scale; y < (y1 - sy) * scale; y++) for (let x = (x0 - sx) * scale; x < (x1 - sx) * scale; x++) {
       const di = ((sy * scale + y) * W + sx * scale + x) * 4, si = (y * rw + x) * rc
       out[di] = r.data[si]; out[di + 1] = r.data[si + 1]; out[di + 2] = r.data[si + 2]; out[di + 3] = 255
