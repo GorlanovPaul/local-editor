@@ -12,3 +12,9 @@ export function alphaBox(c: HTMLCanvasElement, thr = 12) {
   for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > thr) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
   return x1 < 0 ? { x: 0, y: 0, w: c.width, h: c.height } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }
 }
+/** read pixels of an image source (optionally resized to fit `max` long side) */
+export function pixels(src: CanvasImageSource & { width: number; height: number }, max = 1e9) {
+  const s = Math.min(1, max / Math.max(src.width, src.height)), w = Math.max(1, Math.round(src.width * s)), h = Math.max(1, Math.round(src.height * s))
+  const c = canvas(w, h), x = c.getContext('2d', { willReadFrequently: true })!; x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, w, h)
+  return { data: x.getImageData(0, 0, w, h).data, w, h }
+}

@@ -59,6 +59,7 @@ function drawFrame(c: CanvasRenderingContext2D, W: number, H: number, st: EditSt
     if (f.size > 0) { c.strokeStyle = f.color && f.color !== '#ffffff' ? '#ffffff' : '#ffffff'; c.lineWidth = m * f.size / 100 * 0.06; c.beginPath(); c.arc(W / 2, H / 2, R - c.lineWidth / 2, 0, Math.PI * 2); c.stroke() }
     c.restore(); return
   }
+  if (f.kind === 'rounded' && !f.color) { if (exporting) { c.save(); c.globalCompositeOperation = 'destination-in'; rr(c, 0, 0, W, H, m * 0.18); c.fill(); c.restore() } return }
   c.save(); c.fillStyle = f.color || '#ffffff'; c.strokeStyle = f.color || '#ffffff'
   if (f.kind === 'border' || f.kind === 'polaroid') {
     const b = f.kind === 'polaroid' ? t * 3.5 : t

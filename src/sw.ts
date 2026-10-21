@@ -18,18 +18,17 @@ self.addEventListener('fetch', (e: FetchEvent) => {
   }
 })
 
-// Runtime cache (not precached): AI worker chunk, ONNX Runtime wasm (same-origin or jsDelivr). Models are cached by the worker itself.
-const RT = 'local-editor-runtime'
+// HEIC decoder chunk is loaded on demand and cached at runtime (not precached).
+const RT = 'local-editor-heic'
+const OLD = ['transformers-cache', 'local-editor-models', 'local-editor-runtime']
+self.addEventListener('activate', (e: ExtendableEvent) => { e.waitUntil(Promise.all(OLD.map(n => caches.delete(n)))) })
 self.addEventListener('fetch', (e: FetchEvent) => {
   if (e.request.method !== 'GET') return
   const u = new URL(e.request.url)
-  const same = u.origin === self.location.origin && /\/assets\/.*(heic2any|\.wasm)/.test(u.pathname)
-  if (!same && u.hostname !== 'cdn.jsdelivr.net') return
+  if (u.origin !== self.location.origin || !/\/assets\/heic2any/.test(u.pathname)) return
   e.respondWith((async () => {
     const c = await caches.open(RT), hit = await c.match(e.request)
     if (hit) return hit
-    const r = await fetch(e.request)
-    if (r.ok) c.put(e.request, r.clone())
-    return r
+    const r = await fetch(e.request); if (r.ok) c.put(e.request, r.clone()); return r
   })())
 })

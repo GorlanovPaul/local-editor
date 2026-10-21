@@ -4,15 +4,13 @@ import { useRouter } from 'vue-router'
 import { ChevronLeft, ImagePlus, ArrowUp, ArrowDown, Trash2, Download, Loader } from 'lucide-vue-next'
 import { zipSync } from 'fflate'
 import Ruler from '../components/Ruler.vue'
-import { call, pixels, alphaCanvas } from '../ai'
-import { feature, isReady, download as dlFeature, onMetered } from '../features'
-import { canvas, cutout } from '../tools/image'
+import { canvas } from '../tools/image'
 import { makeSticker, encodeLimited, icon100, defaultSticker } from '../tools/sticker'
 import { colors } from '../state'
 import { platform } from '../platform'
 import { pending } from '../store'
 
-interface It { id: number; name: string; cut: HTMLCanvasElement | null; status: string; caption: string; emoji: string; url: string; err?: string }
+interface It { id: number; name: string; src: HTMLCanvasElement | null; shape: 'none' | 'circle' | 'rounded'; cut: HTMLCanvasElement | null; status: string; caption: string; emoji: string; url: string; err?: string }
 const router = useRouter()
 const items = ref<It[]>([])
 const opts = reactive(defaultSticker())
@@ -25,28 +23,34 @@ async function add(files: FileList | File[]) {
   for (const f of Array.from(files)) {
     if (!f.type.startsWith('image/')) continue
     if (items.value.length >= 120) { toast('В стикерпаке максимум 120 стикеров'); break }
-    const it = shallowReactive<It>({ id: ++seq, name: f.name, cut: null, status: 'В очереди', caption: '', emoji: '🙂', url: '' })
+    const it = shallowReactive<It>({ id: ++seq, name: f.name, src: null, shape: 'none', cut: null, status: 'В очереди', caption: '', emoji: '🙂', url: '' })
     items.value.push(it); queue.push({ it, f })
   }
   if (!working.value) run()
 }
-const needDl = ref(false), dlFrac = ref<number | null>(null)
-async function getModel() { dlFrac.value = 0; try { await dlFeature('bg', f => dlFrac.value = f); needDl.value = false; run() } catch { toast('Не удалось скачать. Проверьте интернет') } finally { dlFrac.value = null } }
 async function run() {
-  if (!(await isReady('bg'))) { needDl.value = true; return }
   working.value = true
   while (queue.length) {
     const { it, f } = queue.shift()!
     try {
-      it.status = 'Вырезаю…'
-      const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' } as any)
-      const px = pixels(bmp, 1024), img = canvas(px.w, px.h); img.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px.data), px.w, px.h), 0, 0)
-      const r = await call('bg', { img: px }, (t) => { progress.value = t; it.status = t }, [px.data.buffer])
-      it.cut = cutout(img, alphaCanvas(r)); it.status = ''; preview(it)
-    } catch (e: any) { console.error(e); it.status = 'Не получилось'; it.err = String(e?.message || e) }
+      it.status = 'Открываю…'
+      const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' } as any), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height))
+      const c = canvas(bmp.width * k, bmp.height * k), x = c.getContext('2d')!; x.imageSmoothingQuality = 'high'; x.drawImage(bmp, 0, 0, c.width, c.height)
+      it.src = c; it.shape = hasAlpha(c) ? 'none' : 'rounded'; applyShape(it); it.status = ''
+    } catch (e: any) { console.error(e); it.status = 'Не получилось открыть' }
   }
   working.value = false; progress.value = ''
 }
+function hasAlpha(c: HTMLCanvasElement) { const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4 * 97) if (d[i] < 250) return true; return false }
+/** manual shape crop: circle / rounded square (centered), or as is (for transparent PNG) */
+function applyShape(it: It) {
+  const s = it.src!; if (it.shape === 'none') { it.cut = s; preview(it); return }
+  const m = Math.min(s.width, s.height), c = canvas(m, m), x = c.getContext('2d')!
+  x.beginPath(); if (it.shape === 'circle') x.arc(m / 2, m / 2, m / 2, 0, Math.PI * 2); else x.roundRect(0, 0, m, m, m * 0.18)
+  x.clip(); x.drawImage(s, (s.width - m) / 2, (s.height - m) / 2, m, m, 0, 0, m, m); it.cut = c; preview(it)
+}
+function cycleShape(it: It) { it.shape = it.shape === 'none' ? 'circle' : it.shape === 'circle' ? 'rounded' : 'none'; applyShape(it); platform.haptic() }
+const shapeL = { none: 'Как есть', circle: 'Круг', rounded: 'Скругл.' }
 function preview(it: It) { if (it.cut) it.url = makeSticker(it.cut, { ...opts, caption: it.caption }, 256).toDataURL() }
 let t: any
 watch(opts, () => { clearTimeout(t); t = setTimeout(() => items.value.forEach(preview), 150) }, { deep: true })
@@ -79,11 +83,9 @@ if (pending.value) { const f = pending.value.files; pending.value = null; add(f)
       <button class="pill" :disabled="!ready || working" @click="exportZip"><Download :size="17" />ZIP</button></header>
     <div class="scroll">
       <label class="drop" @dragover.prevent @drop.prevent="add(($event as DragEvent).dataTransfer!.files)">
-        <ImagePlus :size="28" /><b>Добавить фото</b><small>Можно выбрать сразу много — фон уберётся сам</small>
+        <ImagePlus :size="28" /><b>Добавить фото</b><small>Можно выбрать сразу много. PNG с прозрачным фоном получат обводку по контуру; для своего выреза используйте «Стикер для Telegram»</small>
         <input type="file" accept="image/*" multiple hidden @change="add(($event.target as HTMLInputElement).files!); ($event.target as HTMLInputElement).value = ''" />
       </label>
-      <div v-if="needDl" class="need"><b>Нужно скачать функцию удаления фона</b><small>Один раз ≈ {{ feature('bg').mb }} МБ, потом работает без интернета.<template v-if="onMetered()"> Похоже, вы не в Wi-Fi.</template></small>
-        <button class="pill" :disabled="dlFrac != null" @click="getModel">{{ dlFrac != null ? `Скачиваю ${Math.round(dlFrac * 100)}%` : 'Скачать' }}</button></div>
       <p v-if="progress" class="note"><Loader :size="14" class="spin" /> {{ progress }}</p>
       <div v-if="items.length" class="opts">
         <Ruler v-model="opts.outline" :min="0" :max="20" :def="6" label="Обводка" />
@@ -101,6 +103,7 @@ if (pending.value) { const f = pending.value.files; pending.value = null; add(f)
           <div class="acts">
             <button class="ib sm" @click="move(i, -1)" :disabled="i === 0" aria-label="Выше"><ArrowUp :size="16" /></button>
             <button class="ib sm" @click="move(i, 1)" :disabled="i === items.length - 1" aria-label="Ниже"><ArrowDown :size="16" /></button>
+            <button class="chip sm" @click="cycleShape(it)">{{ shapeL[it.shape] }}</button>
             <button class="ib sm" @click="del(i)" aria-label="Удалить"><Trash2 :size="16" /></button>
           </div>
         </div>
@@ -123,8 +126,7 @@ if (pending.value) { const f = pending.value.files; pending.value = null; add(f)
 .pv img{max-width:100%;max-height:100%}
 .meta{display:flex;gap:6px}.emo{width:44px;text-align:center;font-size:20px;border:0;border-radius:10px;background:var(--chip);color:var(--fg)}
 .meta .tin{padding:6px 10px;font-size:14px;border-radius:10px;min-width:0}
-.need{display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center;padding:14px;border-radius:18px;background:var(--chip)}.need small{color:var(--fg2)}
-.acts{display:flex;justify-content:space-between}
+.acts{display:flex;justify-content:space-between;align-items:center}.chip.sm{height:30px;padding:0 10px;font-size:12px}
 .spin{animation:spin 1s linear infinite;vertical-align:-2px}
 .list-move{transition:transform .25s}
 </style>

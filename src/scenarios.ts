@@ -1,20 +1,17 @@
 /** Ready-made scenarios on the home screen. `route` picks the module; `preset` configures the editor. */
 export interface EditorPreset {
-  tab?: string; aiTool?: string; auto?: 'bg' | 'enhance'; aspect?: string; frame?: string; frameColor?: string
+  tab?: string; auto?: 'enhance'; aspect?: string; frame?: string; frameColor?: string
   sticker?: boolean; social?: boolean; export?: { size?: number; type?: string; w?: number; h?: number }
 }
 export interface Scenario { id: string; title: string; desc: string; icon: string; route: string; preset?: EditorPreset; soon?: boolean; tag?: string }
 export const scenarios: Scenario[] = [
   { id: 'edit', title: 'Редактировать фото', desc: 'Свет, цвет, кадр, фильтры', icon: 'SlidersHorizontal', route: '/edit/edit', preset: { tab: 'adjust' } },
-  { id: 'bg', title: 'Убрать фон', desc: 'Прозрачный, цвет или размытие', icon: 'Scissors', route: '/edit/bg', preset: { tab: 'ai', aiTool: 'bg', auto: 'bg', export: { type: 'image/png' } }, tag: 'Умное' },
-  { id: 'sticker', title: 'Стикер для Telegram', desc: 'Вырезка, обводка, 512 px', icon: 'Sticker', route: '/edit/sticker', preset: { tab: 'sticker', auto: 'bg', sticker: true }, tag: 'Умное' },
-  { id: 'pack', title: 'Стикерпак', desc: 'Много фото → ZIP для @Stickers', icon: 'Layers', route: '/pack', tag: 'Умное' },
-  { id: 'erase', title: 'Удалить объект', desc: 'Закрасьте лишнее — исчезнет', icon: 'Eraser', route: '/edit/erase', preset: { tab: 'ai', aiTool: 'erase' }, tag: 'Умное' },
-  { id: 'recolor', title: 'Перекрасить объект', desc: 'Коснитесь и выберите цвет', icon: 'Pipette', route: '/edit/recolor', preset: { tab: 'ai', aiTool: 'obj' }, tag: 'Умное' },
-  { id: 'enhance', title: 'Улучшить качество', desc: 'Автоулучшение и увеличение ×2/×4', icon: 'Sparkles', route: '/edit/enhance', preset: { tab: 'ai', aiTool: 'up', auto: 'enhance' }, tag: 'Умное' },
+  { id: 'sticker', title: 'Стикер для Telegram', desc: 'Вырез, обводка, 512 px', icon: 'Sticker', route: '/edit/sticker', preset: { tab: 'cut', sticker: true } },
+  { id: 'pack', title: 'Стикерпак', desc: 'Много фото → ZIP для @Stickers', icon: 'Layers', route: '/pack' },
+  { id: 'enhance', title: 'Автоулучшение', desc: 'Свет и цвет одним касанием', icon: 'Sparkles', route: '/edit/enhance', preset: { tab: 'adjust', auto: 'enhance' } },
   { id: 'collage', title: 'Коллаж', desc: 'Сетки, отступы, скругления', icon: 'LayoutGrid', route: '/collage' },
   { id: 'meme', title: 'Мем / текст на фото', desc: 'Подписи сверху и снизу', icon: 'Type', route: '/edit/meme', preset: { tab: 'text' } },
-  { id: 'avatar', title: 'Аватарка', desc: 'Круг, новый фон, обводка', icon: 'CircleUser', route: '/edit/avatar', preset: { tab: 'crop', aspect: '1:1', frame: 'circle', frameColor: '', export: { size: 1080, type: 'image/png' } } },
+  { id: 'avatar', title: 'Аватарка', desc: 'Круг или скругление, обводка', icon: 'CircleUser', route: '/edit/avatar', preset: { tab: 'crop', aspect: '1:1', frame: 'circle', frameColor: '', export: { size: 1080, type: 'image/png' } } },
   { id: 'compress', title: 'Сжать / конвертировать', desc: 'Пакетно, без EXIF, HEIC → JPEG', icon: 'FileDown', route: '/convert' },
   { id: 'social', title: 'Размер для соцсетей', desc: 'Instagram, Telegram, VK, YouTube', icon: 'Ratio', route: '/edit/social', preset: { tab: 'crop', social: true } },
 ]

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { scenarios, socialPresets } from '../scenarios'
 import { platform } from '../platform'
 import { pending } from '../store'
-import { cutout } from '../tools/image'
+import { cutout, pixels } from '../tools/image'
 import { makeSticker, encodeLimited, outlined, defaultSticker } from '../tools/sticker'
 import { X, Undo2, Redo2, Crop, SlidersHorizontal, Palette, WandSparkles, Type, Brush, Smile, Frame, RotateCw, FlipHorizontal2, Eraser, Plus, Trash2, ImagePlus, Camera, Eye, Share2, Scissors, Maximize2, Sparkles, Download, Pointer, History, Sticker, ChevronLeft } from 'lucide-vue-next'
 import Ruler from '../components/Ruler.vue'
@@ -12,8 +12,6 @@ import { Renderer, geoMatrix, frameDims, outDims } from '../gl'
 import { drawOverlays, hit, type Box } from '../overlay'
 import { defaultState, adjTools, filters, aspects, frames, fonts, colors, emojis, zeroAdj, type EditState, type AdjKey, type Stroke, type Item, type TextItem } from '../state'
 import { getDraft, putDraft, delDraft, type Draft } from '../db'
-import { call, pixels, alphaCanvas, cancelAI, fmtEta } from '../ai'
-import { feature, isReady, download as downloadFeature, settings, onMetered, type FeatureId } from '../features'
 
 const route = useRoute(), router = useRouter()
 const scen = computed(() => scenarios.find(x => x.id === route.params.scenario) || scenarios[0])
@@ -23,13 +21,12 @@ const exact = ref<{ w: number; h: number } | null>(null)
 const st = reactive<EditState>(defaultState())
 const loaded = ref(false), fileName = ref('photo'), msg = ref(''), dragOver = ref(false)
 const busy = ref<{ text: string; frac?: number; eta?: number; cancel?: boolean } | null>(null)
-const need = ref<{ id: FeatureId; resolve: (ok: boolean) => void } | null>(null)
-type Tab = 'sticker' | 'crop' | 'adjust' | 'filters' | 'ai' | 'text' | 'draw' | 'stickers' | 'frame'
+type Tab = 'cut' | 'sticker' | 'crop' | 'adjust' | 'filters' | 'text' | 'draw' | 'stickers' | 'frame'
 const tab = ref<Tab>('adjust')
 const stickerTab = { id: 'sticker' as Tab, l: 'Стикер', i: Sticker }
 const tabs: { id: Tab; l: string; i: any }[] = [
   { id: 'crop', l: 'Кадр', i: Crop }, { id: 'adjust', l: 'Настройки', i: SlidersHorizontal }, { id: 'filters', l: 'Фильтры', i: Palette },
-  { id: 'ai', l: 'Умное', i: WandSparkles }, { id: 'text', l: 'Текст', i: Type }, { id: 'draw', l: 'Рисунок', i: Brush },
+  { id: 'cut', l: 'Вырез', i: Scissors }, { id: 'text', l: 'Текст', i: Type }, { id: 'draw', l: 'Рисунок', i: Brush },
   { id: 'stickers', l: 'Стикеры', i: Smile }, { id: 'frame', l: 'Рамка', i: Frame }]
 const toast = (t: string, ms = 2500) => { msg.value = t; setTimeout(() => msg.value === t && (msg.value = ''), ms) }
 const buzz = (n = 8) => platform.haptic(n > 12 ? 'success' : n > 7 ? 'medium' : 'light')
@@ -80,14 +77,12 @@ function close() { if (loaded.value) flushSave(); router.push('/') }
 async function applyPreset() {
   const p = preset.value; await nextTick()
   if (p.tab) tab.value = p.tab as Tab
-  if (p.aiTool) aiTool.value = p.aiTool as AiTool
   if (p.frame) { st.frame.kind = p.frame; if (p.frameColor !== undefined) st.frame.color = p.frameColor; st.frame.size = 0 }
   if (p.aspect) setAspect(p.aspect)
   if (p.export) Object.assign(ex, { size: p.export.size ?? ex.size, type: p.export.type ?? ex.type })
   if (p.sticker) { st.frame.kind = 'none' }
   commit()
-  if (p.auto === 'bg') await removeBg()
-  else if (p.auto === 'enhance') autoEnhance()
+  if (p.auto === 'enhance') autoEnhance()
 }
 function setSocial(sp: { w: number; h: number }) { exact.value = { w: sp.w, h: sp.h }; setAspect(`${sp.w}:${sp.h}`) }
 
@@ -122,7 +117,6 @@ let renderer: Renderer | null = null, boxes: Box[] = []
 const out = reactive({ w: 1, h: 1 })
 const comparing = ref(false)
 let curStroke: Stroke | null = null
-const brushMask = shallowRef<HTMLCanvasElement | null>(null) // inpaint brush / selection preview (source coords)
 async function ensureRenderer() {
   if (renderer) return
   loaded.value = true; await nextTick()
@@ -134,10 +128,7 @@ function draw() {
   const r = renderer; if (!r || !st.src || !prev()) return
   if (r.srcId !== st.src) { const p = prev(); r.setSource(p, p.width, p.height); r.srcId = st.src }
   if (r.maskId !== st.bg.ver) { r.setMask(masks.get(st.bg.ver) || null); r.maskId = st.bg.ver }
-  const selCanvas = showBrushMask.value ? brushMask.value : masks.get(st.recolor.mask) || null
-  const selKey = showBrushMask.value ? -2 : st.recolor.mask
-  if (r.selId !== selKey || selKey === -2) { r.setSel(selCanvas); r.selId = selKey }
-  const d = r.render(st, { noCrop: tab.value === 'crop', original: comparing.value, showSel: showBrushMask.value && !comparing.value })
+  const d = r.render(st, { noCrop: tab.value === 'crop', original: comparing.value })
   if (out.w !== d.w || out.h !== d.h) { out.w = d.w; out.h = d.h }
   const o = ovc.value!; if (o.width !== d.w) o.width = d.w; if (o.height !== d.h) o.height = d.h
   const x = o.getContext('2d')!; x.clearRect(0, 0, d.w, d.h)
@@ -186,7 +177,6 @@ let g: G = { kind: 'none' }, lastTap = 0, holdT: any
 const selItem = ref<string | null>(null)
 function norm(cx: number, cy: number) { const r = ovc.value!.getBoundingClientRect(); return { x: (cx - r.left) / r.width, y: (cy - r.top) / r.height, rw: r.width, rh: r.height } }
 function toSrc(nx: number, ny: number) { const p = prev(), m = geoMatrix(st.geo, p.width, p.height, tab.value === 'crop'); return { x: m[0] * nx + m[2] * ny + m[4], y: m[1] * nx + m[3] * ny + m[5] } }
-const showBrushMask = computed(() => tab.value === 'ai' && (aiTool.value === 'erase' || aiTool.value === 'obj') && !!brushMask.value)
 function pdown(e: PointerEvent) {
   if (!loaded.value || busy.value) return
   stage.value!.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); view.anim = false
@@ -201,12 +191,12 @@ function pdown(e: PointerEvent) {
   g = { kind: 'tap', sx: e.clientX, sy: e.clientY, t: Date.now(), tx: view.tx, ty: view.ty }
   if (tab.value === 'crop' && h) { g = { kind: 'crop', mode: h, sx: e.clientX, sy: e.clientY, o: { ...st.geo.crop }, rw: n.rw, rh: n.rh }; return }
   if (tab.value === 'draw') { curStroke = { color: brush.color, width: brush.size / 100 * 0.08, erase: brush.erase, pts: [n.x, n.y] }; g = { kind: 'stroke' }; scheduleRender(); return }
-  if (tab.value === 'ai' && (aiTool.value === 'erase' || (aiTool.value === 'bg' && bgBrush.value !== 'off' && st.bg.ver))) { startMask(n); return }
+  if (tab.value === 'cut' && cutBrush.value !== 'off') { startMask(n); return }
   if (tab.value === 'text' || tab.value === 'stickers') {
     const id = hit(boxes, n.x * out.w, n.y * out.h)
     if (id) { selItem.value = id; const it = st.items.find(i => i.id === id)!; g = { kind: 'item', it, ox: it.x, oy: it.y, sx: e.clientX, sy: e.clientY, rw: n.rw, rh: n.rh, moved: false }; scheduleRender(); return }
   }
-  if (tab.value === 'adjust' || tab.value === 'filters' || (tab.value === 'ai' && aiTool.value === 'bg')) holdT = setTimeout(() => { if (g.kind === 'tap') { comparing.value = true; buzz(); g.hold = true } }, 450)
+  if (tab.value === 'adjust' || tab.value === 'filters' || tab.value === 'cut') holdT = setTimeout(() => { if (g.kind === 'tap') { comparing.value = true; buzz(); g.hold = true } }, 450)
 }
 function pmove(e: PointerEvent) {
   if (!pts.has(e.pointerId)) return
@@ -233,9 +223,8 @@ function pup(e: PointerEvent) {
   if (g.kind === 'tap') {
     if (g.hold) { comparing.value = false } else {
       const now = Date.now(), n = norm(e.clientX, e.clientY)
-      if (tab.value === 'ai' && aiTool.value === 'obj') samTap(n)
-      else if (tab.value === 'text' || tab.value === 'stickers') { selItem.value = null; scheduleRender() }
-      if (now - lastTap < 300 && !(tab.value === 'ai' && aiTool.value === 'obj')) { view.anim = true; if (view.z > 1.05) fitView(); else zoomAt(zoom100.value, e.clientX, e.clientY); clampView(); lastTap = 0 } else lastTap = now
+      if (tab.value === 'text' || tab.value === 'stickers') { selItem.value = null; scheduleRender() }
+      if (now - lastTap < 300) { view.anim = true; if (view.z > 1.05) fitView(); else zoomAt(zoom100.value, e.clientX, e.clientY); clampView(); lastTap = 0 } else lastTap = now
     }
   } else if (g.kind === 'stroke' && curStroke) { st.strokes.push(curStroke); curStroke = null; commit() }
   else if (g.kind === 'mask') endMask()
@@ -322,131 +311,29 @@ const selSize = computed({ get: () => Math.round((sel.value?.size || 0) * 100), 
 // ---------- draw ----------
 const brush = reactive({ color: '#ff3b30', size: 12, erase: false })
 
-// ---------- AI ----------
-type AiTool = 'bg' | 'obj' | 'erase' | 'up'
-const aiTool = ref<AiTool>('bg')
-const aiTools: { id: AiTool; l: string; i: any }[] = [{ id: 'bg', l: 'Фон', i: Scissors }, { id: 'obj', l: 'Объект', i: Pointer }, { id: 'erase', l: 'Удалить', i: Eraser }, { id: 'up', l: 'Увеличить', i: Maximize2 }]
-const bgBrush = ref<'off' | 'restore' | 'erase'>('off')
+// ---------- manual cutout (mask in source coords) ----------
+const cutBrush = ref<'off' | 'erase' | 'restore'>('erase')
 const maskBrush = ref(8)
-watch([aiTool, tab], () => { if (!(tab.value === 'ai' && (aiTool.value === 'obj' || aiTool.value === 'erase'))) { brushMask.value = null; samPts.value = [] } else if (aiTool.value === 'erase' && samPts.value.length) { brushMask.value = null; samPts.value = [] } scheduleRender() })
-/** make sure the feature's files are on the device; asks the user once */
-async function ensure(id: FeatureId): Promise<boolean> {
-  if (await isReady(id)) return true
-  if (!navigator.onLine) { toast('Нужен интернет, чтобы один раз скачать эту функцию'); return false }
-  const ok = await new Promise<boolean>(r => { need.value = { id, resolve: r } }); need.value = null
-  if (!ok) return false
-  busy.value = { text: 'Скачиваю…', frac: 0, cancel: true }; const t0 = Date.now()
-  try { await downloadFeature(id, (f: number) => { busy.value = { text: `Скачиваю ${Math.round(f * 100)}%`, frac: f, eta: f > 0.03 ? (Date.now() - t0) / 1000 / f * (1 - f) : undefined, cancel: true } }); return true }
-  catch (e) { console.error(e); toast('Не удалось скачать. Проверьте интернет и попробуйте ещё раз'); return false }
-  finally { busy.value = null }
-}
-function answerNeed(ok: boolean) { need.value?.resolve(ok) }
-const needFeature = computed(() => need.value ? feature(need.value.id) : null)
-async function aiRun<T>(id: FeatureId, f: () => Promise<T>): Promise<T | undefined> {
-  if (!(await ensure(id))) return
-  busy.value = { text: 'Готовлю…', cancel: true }
-  try { return await f() } catch (e: any) {
-    console.error('[AI]', e)
-    if (e?.name === 'AbortError') toast('Отменено')
-    else if (/memory|alloc|OOM/i.test(String(e?.message))) toast('Фото слишком большое для этого устройства. Уменьшите его и попробуйте снова')
-    else toast('Не получилось обработать фото. Попробуйте ещё раз')
-  } finally { busy.value = null }
-}
-const prog = (text: string, frac?: number, eta?: number) => { busy.value = { text, frac, eta, cancel: true } }
-function cancelBusy() { cancelAI(); busy.value = null }
-async function removeBg() {
-  const r = await aiRun('bg', () => { const px = pixels(prev(), 1536); return call('bg', { img: px }, prog, [px.data.buffer]) })
-  if (!r) return
-  st.bg.ver = addMask(alphaCanvas(r)); if (st.bg.mode === 'off') st.bg.mode = 'transparent'; commit(); buzz(20); toast('Фон удалён. Края можно поправить кистью')
-}
-function setBgMode(m: EditState['bg']['mode']) { st.bg.mode = m; buzz(); commit() }
-// mask painting (source coords) — bg refine & inpaint brush
 function startMask(n: { x: number; y: number }) {
-  if (aiTool.value === 'bg') { const m = masks.get(st.bg.ver); if (!m) return; g = { kind: 'mask', c: cloneCanvas(m), last: null }; st.bg.ver = addMask(g.c) }
-  else { if (!brushMask.value || samPts.value.length) { const p = prev(), s = Math.min(1, 1024 / Math.max(p.width, p.height)); const c = document.createElement('canvas'); c.width = Math.round(p.width * s); c.height = Math.round(p.height * s); brushMask.value = c; samPts.value = [] } g = { kind: 'mask', c: brushMask.value, last: null } }
+  let m = masks.get(st.bg.ver)
+  if (!m) { const p = prev(), s = Math.min(1, 1536 / Math.max(p.width, p.height)); m = document.createElement('canvas'); m.width = Math.round(p.width * s); m.height = Math.round(p.height * s); const x = m.getContext('2d')!; x.fillStyle = '#fff'; x.fillRect(0, 0, m.width, m.height); if (st.bg.mode === 'off') st.bg.mode = 'transparent' }
+  g = { kind: 'mask', c: cloneCanvas(m), last: null }; st.bg.ver = addMask(g.c)
   moveMask(n)
 }
 function moveMask(n: { x: number; y: number }) {
   const c: HTMLCanvasElement = g.c, x = c.getContext('2d')!, s = toSrc(n.x, n.y), p = prev()
-  const rad = Math.max(2, maskBrush.value / 100 * 0.12 * out.w * (c.width / p.width) / Math.max(1, view.z) * 1.5)
-  const erase = aiTool.value === 'bg' ? bgBrush.value === 'erase' : false
-  x.globalCompositeOperation = erase ? 'destination-out' : 'source-over'; x.fillStyle = '#fff'; x.strokeStyle = '#fff'; x.lineCap = 'round'; x.lineWidth = rad * 2
+  const rad = Math.max(1.5, maskBrush.value / 100 * 0.12 * out.w * (c.width / p.width) / Math.max(1, view.z))
+  x.globalCompositeOperation = cutBrush.value === 'erase' ? 'destination-out' : 'source-over'; x.fillStyle = '#fff'; x.strokeStyle = '#fff'; x.lineCap = 'round'; x.lineWidth = rad * 2
   const P = { x: s.x * c.width, y: s.y * c.height }
   x.beginPath(); if (g.last) { x.moveTo(g.last.x, g.last.y); x.lineTo(P.x, P.y); x.stroke() } else { x.arc(P.x, P.y, rad, 0, 7); x.fill() }
-  g.last = P
-  if (aiTool.value === 'bg') renderer!.maskId = -1; scheduleRender()
+  g.last = P; renderer!.maskId = -1; scheduleRender()
 }
-function endMask() { if (aiTool.value === 'bg') commit(); g = { kind: 'none' } }
-// SAM
-const samPts = ref<number[][]>([])
-const samAdd = ref(true)
-let samMask: HTMLCanvasElement | null = null
-async function samTap(n: { x: number; y: number }) {
-  const s = toSrc(n.x, n.y); if (s.x < 0 || s.y < 0 || s.x > 1 || s.y > 1) return
-  buzz(); const ptsN = [...samPts.value, [s.x, s.y, samAdd.value ? 1 : 0]]
-  const r = await aiRun('sam', () => { const px = pixels(prev(), 1024); return call('sam', { img: px, key: 'src' + st.src, pts: ptsN }, prog, [px.data.buffer]) })
-  if (!r) return
-  samPts.value = ptsN; samMask = alphaCanvas(r); brushMask.value = samMask; scheduleRender()
-}
-function samClear() { samPts.value = []; brushMask.value = null; samMask = null; scheduleRender() }
-function selAsMask(invert = false) {
-  const m = samMask!, c = cloneCanvas(m)
-  if (invert) { const x = c.getContext('2d')!; x.globalCompositeOperation = 'xor'; x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height) }
-  return addMask(c)
-}
-const recolorOpen = ref(false)
-function samRecolor(color?: string) { if (!samMask) return; st.recolor = { mask: selAsMask(), color: color || st.recolor.color, amount: 100 }; recolorOpen.value = true; commit(); buzz(); samClear() }
-function samCut() { if (!samMask) return; st.bg.ver = selAsMask(); st.bg.mode = 'transparent'; commit(); toast('Объект вырезан'); samClear() }
-function samBlur(obj: boolean) { if (!samMask) return; st.bg.ver = selAsMask(obj); st.bg.mode = 'blur'; commit(); toast(obj ? 'Объект размыт' : 'Фон размыт'); samClear() }
-async function samDelete() { if (!samMask) return; const c = cloneCanvas(samMask), x = c.getContext('2d')!; for (let a = 0; a < 8; a++) x.drawImage(samMask, Math.cos(a * Math.PI / 4) * 6, Math.sin(a * Math.PI / 4) * 6); brushMask.value = c; await runInpaint(); samClear() }
-// inpaint (MI-GAN)
-async function runInpaint() {
-  const m = brushMask.value; if (!m) { toast('Закрасьте объект кистью'); return }
-  const mode = settings.inpaint, fid: FeatureId = mode === 'quality' ? 'lama' : 'migan'
-  const F = full(), sx = F.width / m.width, sy = F.height / m.height
-  const md = m.getContext('2d')!.getImageData(0, 0, m.width, m.height).data
-  let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1
-  for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) if (md[(y * m.width + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y }
-  if (x1 < 0) { toast('Закрасьте объект кистью'); return }
-  // generous context: square region ≈ 2.5× the mask, clamped to the photo
-  const bw = (x1 - x0 + 1) * sx, bh = (y1 - y0 + 1) * sy, side = Math.max(320, Math.max(bw, bh) * 2.5)
-  const rw = Math.min(F.width, side), rh = Math.min(F.height, side)
-  const rx = Math.max(0, Math.min(F.width - rw, (x0 + x1) / 2 * sx - rw / 2)), ry = Math.max(0, Math.min(F.height - rh, (y0 + y1) / 2 * sy - rh / 2))
-  let tw: number, th: number
-  if (mode === 'quality') { tw = th = 512 } else { const s = Math.min(1, 512 / Math.max(rw, rh)); tw = Math.max(8, Math.round(rw * s / 8) * 8); th = Math.max(8, Math.round(rh * s / 8) * 8) }
-  const ic = document.createElement('canvas'); ic.width = tw; ic.height = th; const ix = ic.getContext('2d', { willReadFrequently: true })!; ix.imageSmoothingQuality = 'high'
-  ix.drawImage(F, rx, ry, rw, rh, 0, 0, tw, th); const img = ix.getImageData(0, 0, tw, th)
-  // dilated mask (~12 px of the original photo, at least 3 px in model space)
-  const dil = Math.max(3, 12 * tw / rw)
-  const mc = document.createElement('canvas'); mc.width = tw; mc.height = th; const mx = mc.getContext('2d', { willReadFrequently: true })!
-  for (let a = 0; a < 16; a++) mx.drawImage(m, rx / sx, ry / sy, rw / sx, rh / sy, Math.cos(a * Math.PI / 8) * dil, Math.sin(a * Math.PI / 8) * dil, tw, th)
-  mx.drawImage(m, rx / sx, ry / sy, rw / sx, rh / sy, 0, 0, tw, th)
-  const ma = mx.getImageData(0, 0, tw, th).data, mask = new Uint8ClampedArray(tw * th)
-  for (let i = 0; i < mask.length; i++) mask[i] = ma[i * 4 + 3] > 10 ? 255 : 0
-  const r = await aiRun(fid, () => call('inpaint', { img: { data: img.data, w: tw, h: th }, mask: mask.slice(), mode }, prog, [img.data.buffer]))
-  if (!r) return
-  const rc = document.createElement('canvas'); rc.width = tw; rc.height = th; rc.getContext('2d')!.putImageData(new ImageData(r.data, tw, th), 0, 0)
-  // blend back at full resolution with a feathered version of the dilated mask
-  const W2 = Math.round(rw), H2 = Math.round(rh), fm = document.createElement('canvas'); fm.width = W2; fm.height = H2
-  const fx = fm.getContext('2d')!; const mm = document.createElement('canvas'); mm.width = tw; mm.height = th
-  const mi = mm.getContext('2d')!.createImageData(tw, th); for (let i = 0; i < mask.length; i++) mi.data[i * 4 + 3] = mask[i]; mm.getContext('2d')!.putImageData(mi, 0, 0)
-  fx.filter = `blur(${Math.max(2, W2 / 160)}px)`; fx.drawImage(mm, 0, 0, W2, H2)
-  const tmp = document.createElement('canvas'); tmp.width = W2; tmp.height = H2; const tx = tmp.getContext('2d')!; tx.imageSmoothingQuality = 'high'
-  tx.drawImage(rc, 0, 0, W2, H2); tx.globalCompositeOperation = 'destination-in'; tx.drawImage(fm, 0, 0)
-  const outC = bitmapCanvas(F); outC.getContext('2d')!.drawImage(tmp, Math.round(rx), Math.round(ry))
-  st.src = await addSource(await createImageBitmap(outC)); brushMask.value = null; commit(); buzz(20); toast('Готово')
-}
-// upscale (Swin2SR)
-const upInfo = computed(() => { const f = sources.get(st.src); return f ? { w: f.width, h: f.height } : { w: 0, h: 0 } })
-async function upscale(k: 2 | 4) {
-  const F = full(), lim = Math.min(renderer?.maxTex || 4096, 4096)
-  const inMax = Math.floor(lim / k), s = Math.min(1, inMax / Math.max(F.width, F.height))
-  if (s < 1) toast(`Фото уже крупное — увеличу до ${Math.round(F.width * s * k)}×${Math.round(F.height * s * k)}`)
-  const r = await aiRun(k === 2 ? 'up2' : 'up4', () => { const px = pixels(F, inMax); return call('upscale', { img: px, scale: k }, prog, [px.data.buffer]) })
-  if (!r) return
-  const c = document.createElement('canvas'); c.width = r.w; c.height = r.h; c.getContext('2d')!.putImageData(new ImageData(r.data, r.w, r.h), 0, 0)
-  st.src = await addSource(await createImageBitmap(c)); commit(); buzz(20); toast(`Готово: ${r.w}×${r.h}`)
-}
+function endMask() { commit(); g = { kind: 'none' } }
+function setShape(k: string) { st.frame.kind = k; if (k !== 'none') { st.frame.color = ''; st.frame.size = 0 } buzz(); commit() }
+function setBgMode(m: EditState['bg']['mode']) { st.bg.mode = m; buzz(); commit() }
+function resetCut() { st.bg.ver = 0; st.bg.mode = 'off'; if ((st.frame.kind === 'circle' || st.frame.kind === 'rounded') && !st.frame.color) st.frame.kind = 'none'; buzz(); commit() }
+const prog = (text: string, frac?: number) => { busy.value = { text, frac } }
+void prog
 // ---------- export ----------
 const exportOpen = ref(false)
 const ex = reactive({ size: 0, type: 'image/jpeg', quality: 90 })
@@ -459,7 +346,7 @@ async function renderExport(): Promise<{ blob: Blob; w: number; h: number }> {
   exR ||= new Renderer(document.createElement('canvas'))
   const lim = exR.maxTex, ss = Math.min(1, lim / Math.max(F.width, F.height), sc < 0.75 ? sc * 1.5 : 1)
   const src = ss < 1 ? await createImageBitmap(F, { resizeWidth: Math.round(F.width * ss), resizeHeight: Math.round(F.height * ss), resizeQuality: 'high' }) : F
-  exR.setSource(src, src.width, src.height); exR.setMask(masks.get(st.bg.ver) || null); exR.setSel(masks.get(st.recolor.mask) || null); exR.selId = st.recolor.mask
+  exR.setSource(src, src.width, src.height); exR.setMask(masks.get(st.bg.ver) || null); exR.setSel(null)
   const W = exact.value ? exact.value.w : Math.max(1, Math.round(d.w * sc)), H = exact.value ? exact.value.h : Math.max(1, Math.round(d.h * sc))
   exR.render(st, { w: Math.min(W, lim), h: Math.min(H, lim) })
   const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d')!
@@ -484,7 +371,7 @@ const fmtSize = (n: number) => n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' 
 function download() { if (!est.value) return; platform.saveFile(est.value.blob, outName.value); buzz(15); toast('Сохранено') }
 const canShare = computed(() => { const b = est.value?.blob; return !!b && platform.canShareFiles([new File([b], outName.value, { type: b.type })]) })
 async function share() { try { await platform.shareFiles([new File([est.value!.blob], outName.value, { type: est.value!.blob.type })]) } catch (e: any) { if (e?.name !== 'AbortError') toast('Не удалось поделиться') } }
-const transparentBg = computed(() => (st.bg.ver && st.bg.mode === 'transparent') || (st.frame.kind === 'circle' && !st.frame.color))
+const transparentBg = computed(() => (st.bg.ver && st.bg.mode === 'transparent') || ((st.frame.kind === 'circle' || st.frame.kind === 'rounded') && !st.frame.color))
 
 // ---------- launch ----------
 onMounted(async () => {
@@ -536,7 +423,7 @@ void toRaw; void cutout
         <p class="hint">или перетащите файл в это окно</p>
       </div>
       <div v-show="loaded" class="view" :class="{ anim: view.anim }"
-        :style="{ clipPath: st.frame.kind === 'circle' && !st.frame.color && tab !== 'crop' ? 'circle(' + Math.min(disp.w, disp.h) / 2 + 'px)' : undefined, width: disp.w + 'px', height: disp.h + 'px', transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`, '--iz': 1 / view.z }">
+        :style="{ clipPath: !st.frame.color && tab !== 'crop' ? (st.frame.kind === 'circle' ? 'circle(' + Math.min(disp.w, disp.h) / 2 + 'px)' : st.frame.kind === 'rounded' ? 'inset(0 round ' + Math.min(disp.w, disp.h) * 0.18 + 'px)' : undefined) : undefined, width: disp.w + 'px', height: disp.h + 'px', transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`, '--iz': 1 / view.z }">
         <canvas ref="ulc" class="ul" />
         <canvas ref="glc" class="gl" />
         <canvas ref="ovc" class="ov" />
@@ -549,9 +436,8 @@ void toRaw; void cutout
       <Transition name="fade"><div v-if="zoomLabel" class="zoomlbl">{{ zoomLabel }}</div></Transition>
       <Transition name="fade"><div v-if="comparing" class="zoomlbl">Оригинал</div></Transition>
       <Transition name="fade">
-        <div v-if="busy" class="busy" @pointerdown.stop><div class="spinner" /><div class="bt"><span>{{ busy.text }}</span><small v-if="busy.eta != null">{{ fmtEta(busy.eta) }}</small>
-          <div v-if="busy.frac != null" class="bar"><i :style="{ width: busy.frac * 100 + '%' }" /></div></div>
-          <button v-if="busy.cancel" class="chip" @click="cancelBusy">Отмена</button></div>
+        <div v-if="busy" class="busy" @pointerdown.stop><div class="spinner" /><div class="bt"><span>{{ busy.text }}</span>
+          <div v-if="busy.frac != null" class="bar"><i :style="{ width: busy.frac * 100 + '%' }" /></div></div></div>
       </Transition>
     </main>
 
@@ -565,7 +451,7 @@ void toRaw; void cutout
               <div class="chips sw"><button v-for="c in colors" :key="c" class="swatch" :class="{ on: stickerOpts.color === c }" :style="{ background: c }" @click="stickerOpts.color = c" /></div>
               <div class="row"><Ruler v-model="stickerOpts.shadow" :min="0" :max="100" :def="40" label="Тень" />
                 <input class="tin cap" v-model="stickerOpts.caption" placeholder="Подпись" maxlength="24" /></div>
-              <small class="note">Экспорт: 512 px, WebP/PNG ≤ 512 КБ — готово для @Stickers. <button class="link" @click="removeBg">Вырезать заново</button></small>
+              <small class="note">Экспорт: 512 px, WebP/PNG ≤ 512 КБ — готово для @Stickers. Фон можно убрать во вкладке «Вырез».</small>
             </template>
             <!-- CROP -->
             <template v-else-if="tab === 'crop'">
@@ -599,68 +485,22 @@ void toRaw; void cutout
                   <img v-if="thumbs[f.id]" :src="thumbs[f.id]" alt="" /><i v-else /><span>{{ f.l }}</span></button>
               </div>
             </template>
-            <!-- AI -->
-            <template v-else-if="tab === 'ai'">
-              <template v-if="aiTool === 'bg'">
-                <template v-if="!st.bg.ver">
-                  <button class="pill wide" @click="removeBg"><Scissors :size="18" />Удалить фон</button>
-                  <small class="note">Работает прямо на телефоне, фото никуда не отправляется</small>
-                </template>
-                <template v-else>
-                  <div class="chips">
-                    <button v-for="m in ([['transparent','Прозрачный'],['color','Цвет'],['blur','Размытие'],['off','Оригинал']] as const)" :key="m[0]" class="chip" :class="{ on: st.bg.mode === m[0] }" @click="setBgMode(m[0])">{{ m[1] }}</button>
-                    <button class="chip" @click="st.bg.ver = 0; st.bg.mode = 'off'; commit()"><Trash2 :size="15" /></button>
-                  </div>
-                  <div v-if="st.bg.mode === 'color'" class="chips sw"><button v-for="c in colors" :key="c" class="swatch" :class="{ on: st.bg.color === c }" :style="{ background: c }" @click="st.bg.color = c; commit()" /><label class="swatch pick"><input type="color" v-model="st.bg.color" @change="commit" /></label></div>
-                  <Ruler v-if="st.bg.mode === 'blur'" v-model="st.bg.blur" :min="0" :max="100" :def="50" label="Размытие фона" @commit="commit" />
-                  <div class="chips">
-                    <button v-for="m in ([['off','Просмотр'],['restore','Кисть: вернуть'],['erase','Кисть: стереть']] as const)" :key="m[0]" class="chip" :class="{ on: bgBrush === m[0] }" @click="bgBrush = m[0]; buzz()">{{ m[1] }}</button>
-                  </div>
-                  <Ruler v-if="bgBrush !== 'off'" v-model="maskBrush" :min="1" :max="100" :def="8" label="Кисть" />
-                </template>
-              </template>
-              <template v-else-if="aiTool === 'obj'">
-                <template v-if="!brushMask">
-                  <p class="tip">Коснитесь объекта на фото, чтобы выделить его</p>
-                  <template v-if="st.recolor.mask">
-                    <div class="chips sw"><button v-for="c in colors" :key="c" class="swatch" :class="{ on: st.recolor.color === c }" :style="{ background: c }" @click="st.recolor.color = c; commit()" /><label class="swatch pick"><input type="color" v-model="st.recolor.color" @change="commit" /></label></div>
-                    <Ruler v-model="st.recolor.amount" :min="0" :max="100" :def="100" label="Перекраска" @commit="commit" />
-                  </template>
-                </template>
-                <template v-else>
-                  <div class="chips">
-                    <button class="chip" :class="{ on: samAdd }" @click="samAdd = true">+ Добавить</button>
-                    <button class="chip" :class="{ on: !samAdd }" @click="samAdd = false">− Исключить</button>
-                    <button class="chip" @click="samClear">Сбросить</button>
-                  </div>
-                  <div class="chips">
-                    <button class="chip" @click="samRecolor()">Перекрасить</button>
-                    <button class="chip" @click="samCut">Вырезать</button>
-                    <button class="chip" @click="samBlur(false)">Размыть фон</button>
-                    <button class="chip" @click="samBlur(true)">Размыть объект</button>
-                    <button class="chip" @click="samDelete">Удалить</button>
-                  </div>
-                </template>
-              </template>
-              <template v-else-if="aiTool === 'erase'">
-                <Ruler v-model="maskBrush" :min="1" :max="100" :def="8" label="Кисть" />
-                <div class="row">
-                  <button class="chip" :disabled="!brushMask" @click="brushMask = null; scheduleRender()">Очистить</button>
-                  <button class="pill" :disabled="!brushMask" @click="runInpaint"><Eraser :size="17" />Удалить объект</button>
-                </div>
-                <div class="chips"><button class="chip" :class="{ on: settings.inpaint === 'quality' }" @click="settings.inpaint = 'quality'">Качество</button><button class="chip" :class="{ on: settings.inpaint === 'fast' }" @click="settings.inpaint = 'fast'">Быстро</button></div>
-                <small class="note">Закрасьте лишнее с запасом и нажмите «Удалить объект»</small>
-              </template>
-              <template v-else>
-                <div class="row">
-                  <button class="pill" @click="upscale(2)">×2</button>
-                  <button class="pill" @click="upscale(4)">×4</button>
-                </div>
-                <small class="note">Сейчас {{ upInfo.w }}×{{ upInfo.h }}. ×4 — для маленьких и сжатых фото. Может занять несколько минут.</small>
-              </template>
+            <!-- CUT -->
+            <template v-else-if="tab === 'cut'">
               <div class="chips">
-                <button v-for="t in aiTools" :key="t.id" class="chip ic" :class="{ on: aiTool === t.id }" @click="aiTool = t.id; buzz(4)"><component :is="t.i" :size="17" /><span>{{ t.l }}</span></button>
+                <button v-for="f in ([['none','Без формы'],['circle','Круг'],['rounded','Скругление']] as const)" :key="f[0]" class="chip" :class="{ on: (f[0] === 'none' ? !((st.frame.kind === 'circle' || st.frame.kind === 'rounded') && !st.frame.color) : st.frame.kind === f[0] && !st.frame.color) }" @click="setShape(f[0])">{{ f[1] }}</button>
               </div>
+              <div class="chips">
+                <button v-for="m in ([['erase','Стереть'],['restore','Вернуть'],['off','Двигать']] as const)" :key="m[0]" class="chip" :class="{ on: cutBrush === m[0] }" @click="cutBrush = m[0]; buzz()">{{ m[1] }}</button>
+                <template v-if="st.bg.ver">
+                  <button v-for="m in ([['transparent','Прозрачный'],['color','Цвет'],['blur','Размытие']] as const)" :key="m[0]" class="chip" :class="{ on: st.bg.mode === m[0] }" @click="setBgMode(m[0])">{{ m[1] }}</button>
+                  <button class="chip" @click="resetCut">Сбросить</button>
+                </template>
+              </div>
+              <div v-if="st.bg.ver && st.bg.mode === 'color'" class="chips sw"><button v-for="c in colors" :key="c" class="swatch" :class="{ on: st.bg.color === c }" :style="{ background: c }" @click="st.bg.color = c; commit()" /><label class="swatch pick"><input type="color" v-model="st.bg.color" @change="commit" /></label></div>
+              <Ruler v-if="st.bg.ver && st.bg.mode === 'blur'" v-model="st.bg.blur" :min="0" :max="100" :def="50" label="Размытие фона" @commit="commit" />
+              <Ruler v-if="cutBrush !== 'off'" v-model="maskBrush" :min="1" :max="100" :def="8" label="Кисть" />
+              <small class="note">Сотрите пальцем лишний фон. Увеличьте фото двумя пальцами для точности.</small>
             </template>
             <!-- TEXT -->
             <template v-else-if="tab === 'text'">
@@ -733,16 +573,6 @@ void toRaw; void cutout
     </Transition>
 
     <Transition name="fade"><div v-if="msg" class="toast" @click="msg = ''">{{ msg }}</div></Transition>
-    <Transition name="sheet">
-      <div v-if="needFeature" class="scrim" @click.self="answerNeed(false)">
-        <div class="sheet">
-          <div class="grab" />
-          <h3>{{ needFeature.name }}</h3>
-          <p class="sheettext">Для этой функции нужно один раз скачать ≈ {{ needFeature.mb }} МБ. Потом она работает без интернета, а фото не покидают телефон.</p>
-          <p v-if="onMetered()" class="sheettext warn">Похоже, вы не в Wi-Fi — может расходоваться мобильный трафик.</p>
-          <div class="row"><button class="pill wide alt" @click="answerNeed(false)">Не сейчас</button><button class="pill wide" @click="answerNeed(true)">Скачать</button></div>
-        </div>
-      </div>
-    </Transition>
+
   </div>
 </template>
