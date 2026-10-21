@@ -17,3 +17,19 @@ self.addEventListener('fetch', (e: FetchEvent) => {
     })())
   }
 })
+
+// Runtime cache (not precached): AI worker chunk, ONNX Runtime wasm (same-origin or jsDelivr). Models are cached by the worker itself.
+const RT = 'local-editor-runtime'
+self.addEventListener('fetch', (e: FetchEvent) => {
+  if (e.request.method !== 'GET') return
+  const u = new URL(e.request.url)
+  const same = u.origin === self.location.origin && /\/assets\/.*(ai\.worker|ort|\.wasm)/.test(u.pathname)
+  if (!same && u.hostname !== 'cdn.jsdelivr.net') return
+  e.respondWith((async () => {
+    const c = await caches.open(RT), hit = await c.match(e.request)
+    if (hit) return hit
+    const r = await fetch(e.request)
+    if (r.ok) c.put(e.request, r.clone())
+    return r
+  })())
+})

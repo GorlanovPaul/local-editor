@@ -5,10 +5,10 @@ export default defineConfig({
   base: '/local-editor/',
   plugins: [vue(), VitePWA({
     strategies: 'injectManifest', srcDir: 'src', filename: 'sw.ts', registerType: 'prompt',
-    injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest}'] },
+    injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest}'], globIgnores: ['**/ai.worker-*.js', '**/*.wasm', '**/ort*.mjs'], maximumFileSizeToCacheInBytes: 3_000_000 },
     manifest: {
       name: 'Local Editor', short_name: 'LocalEditor', description: 'Локальный редактор фото — без загрузки на сервер',
-      lang: 'ru', id: '/local-editor/', start_url: '/local-editor/', scope: '/local-editor/', display: 'standalone', theme_color: '#1e1f26', background_color: '#1e1f26',
+      lang: 'ru', id: '/local-editor/', start_url: '/local-editor/', scope: '/local-editor/', display: 'standalone', theme_color: '#000000', background_color: '#000000',
       icons: [
         { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
         { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
