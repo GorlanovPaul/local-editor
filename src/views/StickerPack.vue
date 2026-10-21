@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import { ChevronLeft, ImagePlus, ArrowUp, ArrowDown, Trash2, Download, Loader } from 'lucide-vue-next'
 import { zipSync } from 'fflate'
 import Ruler from '../components/Ruler.vue'
-import { call, pixels, alphaCanvas, MODEL_SIZES } from '../ai'
+import { call, pixels, alphaCanvas } from '../ai'
+import { feature, isReady, download as dlFeature, onMetered } from '../features'
 import { canvas, cutout } from '../tools/image'
 import { makeSticker, encodeLimited, icon100, defaultSticker } from '../tools/sticker'
 import { colors } from '../state'
@@ -29,7 +30,10 @@ async function add(files: FileList | File[]) {
   }
   if (!working.value) run()
 }
+const needDl = ref(false), dlFrac = ref<number | null>(null)
+async function getModel() { dlFrac.value = 0; try { await dlFeature('bg', f => dlFrac.value = f); needDl.value = false; run() } catch { toast('Не удалось скачать. Проверьте интернет') } finally { dlFrac.value = null } }
 async function run() {
+  if (!(await isReady('bg'))) { needDl.value = true; return }
   working.value = true
   while (queue.length) {
     const { it, f } = queue.shift()!
@@ -37,9 +41,9 @@ async function run() {
       it.status = 'Вырезаю…'
       const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' } as any)
       const px = pixels(bmp, 1024), img = canvas(px.w, px.h); img.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px.data), px.w, px.h), 0, 0)
-      const r = await call('bg', { img: px }, (t, fr) => { progress.value = t + (fr != null ? ` ${Math.round(fr * 100)}%` : ''); it.status = t }, [px.data.buffer])
+      const r = await call('bg', { img: px }, (t) => { progress.value = t; it.status = t }, [px.data.buffer])
       it.cut = cutout(img, alphaCanvas(r)); it.status = ''; preview(it)
-    } catch (e: any) { it.status = 'Ошибка'; it.err = String(e?.message || e) }
+    } catch (e: any) { console.error(e); it.status = 'Не получилось'; it.err = String(e?.message || e) }
   }
   working.value = false; progress.value = ''
 }
@@ -75,9 +79,11 @@ if (pending.value) { const f = pending.value.files; pending.value = null; add(f)
       <button class="pill" :disabled="!ready || working" @click="exportZip"><Download :size="17" />ZIP</button></header>
     <div class="scroll">
       <label class="drop" @dragover.prevent @drop.prevent="add(($event as DragEvent).dataTransfer!.files)">
-        <ImagePlus :size="28" /><b>Добавить фото</b><small>Можно выбрать сразу много. Фон удаляется автоматически (RMBG {{ MODEL_SIZES.bg }}, один раз)</small>
+        <ImagePlus :size="28" /><b>Добавить фото</b><small>Можно выбрать сразу много — фон уберётся сам</small>
         <input type="file" accept="image/*" multiple hidden @change="add(($event.target as HTMLInputElement).files!); ($event.target as HTMLInputElement).value = ''" />
       </label>
+      <div v-if="needDl" class="need"><b>Нужно скачать функцию удаления фона</b><small>Один раз ≈ {{ feature('bg').mb }} МБ, потом работает без интернета.<template v-if="onMetered()"> Похоже, вы не в Wi-Fi.</template></small>
+        <button class="pill" :disabled="dlFrac != null" @click="getModel">{{ dlFrac != null ? `Скачиваю ${Math.round(dlFrac * 100)}%` : 'Скачать' }}</button></div>
       <p v-if="progress" class="note"><Loader :size="14" class="spin" /> {{ progress }}</p>
       <div v-if="items.length" class="opts">
         <Ruler v-model="opts.outline" :min="0" :max="20" :def="6" label="Обводка" />
@@ -117,6 +123,7 @@ if (pending.value) { const f = pending.value.files; pending.value = null; add(f)
 .pv img{max-width:100%;max-height:100%}
 .meta{display:flex;gap:6px}.emo{width:44px;text-align:center;font-size:20px;border:0;border-radius:10px;background:var(--chip);color:var(--fg)}
 .meta .tin{padding:6px 10px;font-size:14px;border-radius:10px;min-width:0}
+.need{display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center;padding:14px;border-radius:18px;background:var(--chip)}.need small{color:var(--fg2)}
 .acts{display:flex;justify-content:space-between}
 .spin{animation:spin 1s linear infinite;vertical-align:-2px}
 .list-move{transition:transform .25s}

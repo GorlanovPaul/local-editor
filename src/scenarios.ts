@@ -6,12 +6,12 @@ export interface EditorPreset {
 export interface Scenario { id: string; title: string; desc: string; icon: string; route: string; preset?: EditorPreset; soon?: boolean; tag?: string }
 export const scenarios: Scenario[] = [
   { id: 'edit', title: 'Редактировать фото', desc: 'Свет, цвет, кадр, фильтры', icon: 'SlidersHorizontal', route: '/edit/edit', preset: { tab: 'adjust' } },
-  { id: 'bg', title: 'Убрать фон', desc: 'Прозрачный, цвет или размытие', icon: 'Scissors', route: '/edit/bg', preset: { tab: 'ai', aiTool: 'bg', auto: 'bg', export: { type: 'image/png' } }, tag: 'ИИ' },
-  { id: 'sticker', title: 'Стикер для Telegram', desc: 'Вырезка, обводка, 512 px', icon: 'Sticker', route: '/edit/sticker', preset: { tab: 'sticker', auto: 'bg', sticker: true }, tag: 'ИИ' },
-  { id: 'pack', title: 'Стикерпак', desc: 'Много фото → ZIP для @Stickers', icon: 'Layers', route: '/pack', tag: 'ИИ' },
-  { id: 'erase', title: 'Удалить объект', desc: 'Закрасьте лишнее — исчезнет', icon: 'Eraser', route: '/edit/erase', preset: { tab: 'ai', aiTool: 'erase' }, tag: 'ИИ' },
-  { id: 'recolor', title: 'Перекрасить объект', desc: 'Коснитесь и выберите цвет', icon: 'Pipette', route: '/edit/recolor', preset: { tab: 'ai', aiTool: 'obj' }, tag: 'ИИ' },
-  { id: 'enhance', title: 'Улучшить качество', desc: 'Автоулучшение и увеличение ×2/×4', icon: 'Sparkles', route: '/edit/enhance', preset: { tab: 'ai', aiTool: 'up', auto: 'enhance' }, tag: 'ИИ' },
+  { id: 'bg', title: 'Убрать фон', desc: 'Прозрачный, цвет или размытие', icon: 'Scissors', route: '/edit/bg', preset: { tab: 'ai', aiTool: 'bg', auto: 'bg', export: { type: 'image/png' } }, tag: 'Умное' },
+  { id: 'sticker', title: 'Стикер для Telegram', desc: 'Вырезка, обводка, 512 px', icon: 'Sticker', route: '/edit/sticker', preset: { tab: 'sticker', auto: 'bg', sticker: true }, tag: 'Умное' },
+  { id: 'pack', title: 'Стикерпак', desc: 'Много фото → ZIP для @Stickers', icon: 'Layers', route: '/pack', tag: 'Умное' },
+  { id: 'erase', title: 'Удалить объект', desc: 'Закрасьте лишнее — исчезнет', icon: 'Eraser', route: '/edit/erase', preset: { tab: 'ai', aiTool: 'erase' }, tag: 'Умное' },
+  { id: 'recolor', title: 'Перекрасить объект', desc: 'Коснитесь и выберите цвет', icon: 'Pipette', route: '/edit/recolor', preset: { tab: 'ai', aiTool: 'obj' }, tag: 'Умное' },
+  { id: 'enhance', title: 'Улучшить качество', desc: 'Автоулучшение и увеличение ×2/×4', icon: 'Sparkles', route: '/edit/enhance', preset: { tab: 'ai', aiTool: 'up', auto: 'enhance' }, tag: 'Умное' },
   { id: 'collage', title: 'Коллаж', desc: 'Сетки, отступы, скругления', icon: 'LayoutGrid', route: '/collage' },
   { id: 'meme', title: 'Мем / текст на фото', desc: 'Подписи сверху и снизу', icon: 'Type', route: '/edit/meme', preset: { tab: 'text' } },
   { id: 'avatar', title: 'Аватарка', desc: 'Круг, новый фон, обводка', icon: 'CircleUser', route: '/edit/avatar', preset: { tab: 'crop', aspect: '1:1', frame: 'circle', frameColor: '', export: { size: 1080, type: 'image/png' } } },

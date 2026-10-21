@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ImagePlus, Image, SlidersHorizontal, Scissors, Sticker, Layers, Eraser, Pipette, Sparkles, LayoutGrid, Type, CircleUser, FileDown, Ratio } from 'lucide-vue-next'
+import { Settings as Gear, ImagePlus, Image, SlidersHorizontal, Scissors, Sticker, Layers, Eraser, Pipette, Sparkles, LayoutGrid, Type, CircleUser, FileDown, Ratio } from 'lucide-vue-next'
 const I: Record<string, any> = { ImagePlus, Image, SlidersHorizontal, Scissors, Sticker, Layers, Eraser, Pipette, Sparkles, LayoutGrid, Type, CircleUser, FileDown, Ratio }
 import { scenarios } from '../scenarios'
 import { platform } from '../platform'
@@ -12,7 +12,7 @@ function quick(e: Event) { const i = e.target as HTMLInputElement; if (i.files?.
 </script>
 <template>
   <div class="home">
-    <header><div class="brand"><span class="dot" />Local Editor</div><small>Всё на устройстве · офлайн</small></header>
+    <header><div class="brand"><span class="dot" />Local Editor</div><button class="ib" @click="router.push('/settings')" aria-label="Настройки"><Gear :size="22" /></button></header>
     <h1>Что хотите сделать?</h1>
     <label class="quick"><ImagePlus :size="22" /><span>Открыть фото</span><input type="file" accept="image/*" hidden @change="quick" /></label>
     <div class="cards">
@@ -22,7 +22,7 @@ function quick(e: Event) { const i = e.target as HTMLInputElement; if (i.files?.
         <em v-if="s.soon">скоро</em><em v-else-if="s.tag" class="ai">{{ s.tag }}</em>
       </button>
     </div>
-    <p class="foot">Фото не покидают устройство. Модели ИИ загружаются один раз при первом использовании.</p>
+    <p class="foot">Фото не покидают устройство. Умные функции скачиваются один раз — в настройках.</p>
   </div>
 </template>
 <style scoped>
