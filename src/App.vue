@@ -123,8 +123,8 @@ async function share() { try { await navigator.share({ files: [file.value!], tit
 // ---------- Launch: share target / file handler ----------
 onMounted(async () => {
   if (location.search.includes('shared=1') && 'caches' in window) {
-    const c = await caches.open('local-editor-share'); const r = await c.match('/shared-image')
-    if (r) { await loadFile(await r.blob(), decodeURIComponent(r.headers.get('X-Name') || 'shared')); await c.delete('/shared-image') }
+    const c = await caches.open('local-editor-share'); const r = await c.match(new URL('shared-image', location.origin + import.meta.env.BASE_URL).href)
+    if (r) { await loadFile(await r.blob(), decodeURIComponent(r.headers.get('X-Name') || 'shared')); await c.delete(new URL('shared-image', location.origin + import.meta.env.BASE_URL).href) }
     window.history.replaceState(null, '', '/')
   }
   const lq = (window as any).launchQueue
